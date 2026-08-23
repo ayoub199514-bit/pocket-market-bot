@@ -33,20 +33,27 @@ TIMEFRAME_MAP = {
     "1 يوم": ("1d", "1y"),
 }
 
+# فريم أعلى يُستخدم كتأكيد إضافي (Multi-Timeframe Confirmation) لكل فريم أساسي
+HIGHER_TIMEFRAME_MAP = {
+    "1 دقيقة": "5 دقائق",
+    "5 دقائق": "15 دقيقة",
+    "15 دقيقة": "1 ساعة",
+    "1 ساعة": "1 يوم",
+    "1 يوم": None,  # لا يوجد فريم أعلى منطقي هنا ضمن القائمة
+}
 
-def fetch_ohlc(symbol_label: str, timeframe_label: str) -> pd.DataFrame:
-    """
-    يجلب بيانات الشموع لرمز وفريم زمني معينين.
-    يعيد DataFrame بأعمدة: open, high, low, close, volume (index = وقت الشمعة)
-    """
-    if symbol_label not in SYMBOL_MAP:
-        raise ValueError(f"رمز غير معروف: {symbol_label}")
-    if timeframe_label not in TIMEFRAME_MAP:
-        raise ValueError(f"فريم زمني غير معروف: {timeframe_label}")
+# كل كم ثانية نتحقق (خفيف) من ظهور شمعة جديدة في وضع "تحليل عند إغلاق كل شمعة"
+# القيمة أصغر من مدة الشمعة نفسها حتى لا تفوتنا لحظة إغلاقها
+CANDLE_CHECK_INTERVAL_SECONDS = {
+    "1 دقيقة": 5,
+    "5 دقائق": 15,
+    "15 دقيقة": 30,
+    "1 ساعة": 60,
+    "1 يوم": 300,
+}
 
-    ticker = SYMBOL_MAP[symbol_label]
-    interval, period = TIMEFRAME_MAP[timeframe_label]
 
+def _download(ticker: str, interval: str, period: str) -> pd.DataFrame:
     raw = yf.download(
         tickers=ticker,
         interval=interval,
@@ -74,5 +81,34 @@ def fetch_ohlc(symbol_label: str, timeframe_label: str) -> pd.DataFrame:
         }
     )[["open", "high", "low", "close", "volume"]]
 
-    df = df.dropna()
-    return df
+    return df.dropna()
+
+
+def fetch_ohlc(symbol_label: str, timeframe_label: str) -> pd.DataFrame:
+    """
+    يجلب بيانات الشموع لرمز وفريم زمني معينين.
+    يعيد DataFrame بأعمدة: open, high, low, close, volume (index = وقت الشمعة)
+    """
+    if symbol_label not in SYMBOL_MAP:
+        raise ValueError(f"رمز غير معروف: {symbol_label}")
+    if timeframe_label not in TIMEFRAME_MAP:
+        raise ValueError(f"فريم زمني غير معروف: {timeframe_label}")
+
+    ticker = SYMBOL_MAP[symbol_label]
+    interval, period = TIMEFRAME_MAP[timeframe_label]
+    return _download(ticker, interval, period)
+
+
+def fetch_higher_timeframe_ohlc(symbol_label: str, timeframe_label: str):
+    """
+    يجلب بيانات فريم زمني أعلى لاستخدامها كتأكيد إضافي للإشارة.
+    يعيد None بهدوء (بدون رفع استثناء) إذا تعذر الجلب أو لا يوجد فريم أعلى مناسب،
+    لأن هذا تأكيد اختياري وليس أساسيًا لعمل التحليل.
+    """
+    higher_label = HIGHER_TIMEFRAME_MAP.get(timeframe_label)
+    if higher_label is None:
+        return None, None
+    try:
+        return fetch_ohlc(symbol_label, higher_label), higher_label
+    except Exception:
+        return None, higher_label
